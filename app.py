@@ -307,8 +307,4 @@ else:
         st.info("🎯 Select your grade columns")
     with col3:
         st.info("🤖 Get AI recommendations")
-```
 
-بعد ما تنسخي اضغطي:
-```
-Commit changes → Commit directly to main
