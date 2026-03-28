@@ -1,246 +1,314 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
 from groq import Groq
 
-# ═══════════════════════════════
-# إعدادات الصفحة
-# ═══════════════════════════════
+# ═══════════════════════════════════════
+# إعداد الصفحة
+# ═══════════════════════════════════════
 st.set_page_config(
-    page_title="Student Performance AI",
+    page_title="Student Performance Analyzer",
     page_icon="🎓",
     layout="wide"
 )
 
-st.title("🎓 Student Performance AI Analyzer")
-st.markdown("Upload your student grades CSV and get AI-powered insights.")
+st.title("🎓 Student Performance Analyzer")
+st.markdown("Upload any student grades CSV and get AI-powered recommendations.")
 st.divider()
 
-# ═══════════════════════════════
-# Sidebar — الإعدادات
-# ═══════════════════════════════
+# ═══════════════════════════════════════
+# Sidebar
+# ═══════════════════════════════════════
 with st.sidebar:
     st.header("⚙️ Settings")
-    groq_key = st.text_input("Groq API Key", type="password", 
-                              placeholder="gsk_...")
+    groq_key = st.text_input(
+        "Groq API Key",
+        type="password",
+        placeholder="gsk_..."
+    )
     st.caption("Get your free key at console.groq.com")
     st.divider()
-    weak_threshold  = st.slider("Weak course threshold",   40, 70, 60)
-    medium_threshold = st.slider("Medium course threshold", 60, 85, 70)
-    st.divider()
-    st.caption("Weak < threshold < Medium < Good")
+    st.markdown("**How it works:**")
+    st.markdown("1. Upload any CSV file")
+    st.markdown("2. Select grade columns")
+    st.markdown("3. Click Analyze")
+    st.markdown("4. Get AI recommendations per course")
 
-# ═══════════════════════════════
+# ═══════════════════════════════════════
 # رفع الملف
-# ═══════════════════════════════
+# ═══════════════════════════════════════
 uploaded_file = st.file_uploader("📂 Upload Student Grades CSV", type="csv")
 
-if uploaded_file is not None:
+if uploaded_file:
     df = pd.read_csv(uploaded_file)
+    st.success(f"✅ Loaded: {len(df)} students, {len(df.columns)} columns")
 
-    # تحديد المواد تلقائياً
-    exclude = ['StudentID','Rank','Semester_1_Grade',
-               'Semester_2_Grade','Final_Grade']
-    courses = [c for c in df.columns if c not in exclude 
-               and df[c].dtype in ['float64','int64']]
+    with st.expander("👀 Preview Data"):
+        st.dataframe(df.head())
 
-    st.success(f"✅ Loaded {len(df)} students | {len(courses)} courses detected")
+    st.divider()
 
-    # ═══════════════════════════════
-    # تبويبات
-    # ═══════════════════════════════
-    tab1, tab2, tab3 = st.tabs(["📊 Analysis", "🤖 ML Model", "💡 AI Recommendations"])
+    # ═══════════════════════════════════════
+    # اختيار الأعمدة — تلقائي وفليكسبل
+    # ═══════════════════════════════════════
+    st.subheader("📋 Select Columns")
 
-    # ───────────────────────────────
-    # تبويب 1 — التحليل
-    # ───────────────────────────────
-    with tab1:
-        st.subheader("Course Performance Overview")
+    numeric_cols = df.select_dtypes(include='number').columns.tolist()
+    all_cols     = df.columns.tolist()
 
-        averages = df[courses].mean().sort_values()
+    selected_courses = st.multiselect(
+        "Select course columns to analyze:",
+        options=all_cols,
+        default=numeric_cols
+    )
 
-        # تلوين المواد
-        colors = []
-        for avg in averages:
-            if avg < weak_threshold:
-                colors.append('#E24B4A')
-            elif avg < medium_threshold:
-                colors.append('#EF9F27')
-            else:
-                colors.append('#1D9E75')
+    final_col = st.selectbox(
+        "Select Final Grade column:",
+        options=numeric_cols,
+        index=len(numeric_cols) - 1
+    )
 
-        fig, ax = plt.subplots(figsize=(10, 6))
-        bars = ax.barh(averages.index, averages.values, color=colors, height=0.6)
+    # حدود التصنيف
+    st.subheader("🎯 Classification Thresholds")
+    col1, col2 = st.columns(2)
+    with col1:
+        weak_threshold = st.slider(
+            "Weak below:", 
+            min_value=40, max_value=70, value=60
+        )
+    with col2:
+        avg_threshold = st.slider(
+            "Average below:", 
+            min_value=60, max_value=90, value=75
+        )
 
-        overall_avg = averages.mean()
-        ax.axvline(x=overall_avg, color='#378ADD', linestyle='--', 
-                   linewidth=1.5, label=f'Overall Avg: {overall_avg:.1f}')
+    # ═══════════════════════════════════════
+    # زر التحليل
+    # ═══════════════════════════════════════
+    if st.button("🔍 Analyze & Get AI Recommendations", type="primary"):
 
-        for bar, val in zip(bars, averages.values):
-            ax.text(val + 0.5, bar.get_y() + bar.get_height()/2,
-                    f'{val:.1f}', va='center', fontsize=9)
+        if not groq_key:
+            st.error("⚠️ Please enter your Groq API Key in the sidebar!")
+            st.stop()
 
-        ax.set_xlim(0, 110)
-        ax.set_xlabel('Average Score')
-        ax.set_title('Student Performance by Course')
+        if len(selected_courses) < 2:
+            st.error("⚠️ Please select at least 2 course columns!")
+            st.stop()
 
-        red   = mpatches.Patch(color='#E24B4A', label=f'Weak (< {weak_threshold})')
-        amber = mpatches.Patch(color='#EF9F27', label=f'Medium ({weak_threshold}-{medium_threshold})')
-        green = mpatches.Patch(color='#1D9E75', label=f'Good (> {medium_threshold})')
-        ax.legend(handles=[red, amber, green, ax.lines[0]])
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
+        # ── حساب المتوسطات ──
+        with st.spinner("Analyzing..."):
+            averages = df[selected_courses].mean().sort_values()
 
-        plt.tight_layout()
-        st.pyplot(fig)
+            weak   = averages[averages < weak_threshold]
+            medium = averages[
+                (averages >= weak_threshold) & (averages < avg_threshold)
+            ]
+            good   = averages[averages >= avg_threshold]
 
-        # إحصاءات سريعة
-        weak_courses   = averages[averages < weak_threshold].index.tolist()
-        medium_courses = averages[(averages >= weak_threshold) & 
-                                  (averages < medium_threshold)].index.tolist()
-        good_courses   = averages[averages >= medium_threshold].index.tolist()
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("🔴 Weak Courses",   len(weak_courses))
-        with col2:
-            st.metric("🟡 Medium Courses", len(medium_courses))
-        with col3:
-            st.metric("🟢 Good Courses",   len(good_courses))
-
-        if weak_courses:
-            st.error(f"⚠️ Weak courses: {', '.join(weak_courses)}")
-
-    # ───────────────────────────────
-    # تبويب 2 — ML Model
-    # ───────────────────────────────
-    with tab2:
-        st.subheader("ML Model — Student Level Prediction")
-
-        if 'Final_Grade' in df.columns:
-            X     = df[courses]
-            y_raw = df['Final_Grade']
-
-            X_train, X_test, y_train_raw, y_test_raw = train_test_split(
-                X, y_raw, test_size=0.2, random_state=42
-            )
-
+            # تصنيف الطلاب
             def classify(grade):
-                if grade < 60:   return 'Weak'
-                elif grade < 75: return 'Average'
-                else:            return 'Excellent'
+                if grade < weak_threshold:   return 'Weak'
+                elif grade < avg_threshold:  return 'Average'
+                else:                        return 'Excellent'
 
-            y_train = y_train_raw.apply(classify)
-            y_test  = y_test_raw.apply(classify)
+            df['Level'] = df[final_col].apply(classify)
+            counts = df['Level'].value_counts()
 
-            model = RandomForestClassifier(n_estimators=100, random_state=42)
-            model.fit(X_train, y_train)
-            y_pred   = model.predict(X_test)
-            accuracy = accuracy_score(y_test, y_pred)
+        # ═══════════════════════════════════════
+        # النتائج
+        # ═══════════════════════════════════════
+        st.divider()
+        st.subheader("📊 Results")
 
-            st.metric("🎯 Model Accuracy", f"{accuracy*100:.1f}%")
+        # Metric Cards
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Total Students", len(df))
+        c2.metric("🔴 Weak",
+                  f"{counts.get('Weak',0)}",
+                  f"{counts.get('Weak',0)/len(df)*100:.1f}%")
+        c3.metric("🟡 Average",
+                  f"{counts.get('Average',0)}",
+                  f"{counts.get('Average',0)/len(df)*100:.1f}%")
+        c4.metric("🟢 Excellent",
+                  f"{counts.get('Excellent',0)}",
+                  f"{counts.get('Excellent',0)/len(df)*100:.1f}%")
 
-            # Feature importance
-            importances = model.feature_importances_
-            indices     = np.argsort(importances)
+        st.divider()
 
-            fig2, ax2 = plt.subplots(figsize=(10, 6))
-            imp_colors = ['#E24B4A' if importances[i] > 0.08 else
-                          '#EF9F27' if importances[i] > 0.04 else
-                          '#1D9E75' for i in indices]
+        # ── الرسومات ──
+        col_l, col_r = st.columns(2)
 
-            ax2.barh([courses[i] for i in indices],
-                     importances[indices], color=imp_colors, height=0.6)
-            ax2.set_xlabel('Importance Score')
-            ax2.set_title('Which Courses Affect Student Level the Most?')
-            ax2.spines['top'].set_visible(False)
-            ax2.spines['right'].set_visible(False)
+        with col_l:
+            st.markdown("**Course Performance**")
+            colors = [
+                '#E24B4A' if v < weak_threshold else
+                '#EF9F27' if v < avg_threshold else
+                '#1D9E75'
+                for v in averages.values
+            ]
+            fig1, ax1 = plt.subplots(figsize=(8, max(5, len(selected_courses)*0.4)))
+            bars = ax1.barh(averages.index, averages.values,
+                            color=colors, height=0.6)
+            for bar, val in zip(bars, averages.values):
+                ax1.text(val + 0.5,
+                         bar.get_y() + bar.get_height()/2,
+                         f'{val:.1f}', va='center', fontsize=9)
+            ax1.axvline(x=averages.mean(), color='#378ADD',
+                        linestyle='--', linewidth=1.5)
+            ax1.set_xlim(0, 110)
+            ax1.set_xlabel('Average Score')
+            red   = mpatches.Patch(color='#E24B4A',
+                                   label=f'Weak (<{weak_threshold})')
+            amber = mpatches.Patch(color='#EF9F27',
+                                   label=f'Medium ({weak_threshold}-{avg_threshold})')
+            green = mpatches.Patch(color='#1D9E75',
+                                   label=f'Good (>{avg_threshold})')
+            ax1.legend(handles=[red, amber, green], fontsize=9)
+            ax1.spines['top'].set_visible(False)
+            ax1.spines['right'].set_visible(False)
+            plt.tight_layout()
+            st.pyplot(fig1)
+
+        with col_r:
+            st.markdown("**Student Distribution**")
+            fig2, ax2 = plt.subplots(figsize=(6, 6))
+            level_colors = {
+                'Weak':      '#E24B4A',
+                'Average':   '#EF9F27',
+                'Excellent': '#1D9E75'
+            }
+            pie_colors = [level_colors.get(l, '#888') for l in counts.index]
+            ax2.pie(
+                counts.values,
+                labels=counts.index,
+                colors=pie_colors,
+                autopct='%1.1f%%',
+                startangle=90,
+                wedgeprops={'edgecolor': 'white', 'linewidth': 2}
+            )
             plt.tight_layout()
             st.pyplot(fig2)
 
-            # تنبؤ بطالب جديد
-            st.divider()
-            st.subheader("🔍 Predict a New Student")
-            st.caption("Enter grades for a new student to predict their level")
+        # ── تفاصيل المواد ──
+        st.divider()
+        col_w, col_m, col_g = st.columns(3)
 
-            cols     = st.columns(3)
-            new_data = {}
-            for i, course in enumerate(courses):
-                with cols[i % 3]:
-                    new_data[course] = st.number_input(
-                        course.replace('_',' '), 
-                        min_value=0.0, max_value=100.0, 
-                        value=70.0, step=0.5
+        with col_w:
+            st.markdown("**🔴 Weak Courses**")
+            if len(weak) > 0:
+                for c, v in weak.items():
+                    st.error(f"{c}: {v:.1f}")
+            else:
+                st.success("None!")
+
+        with col_m:
+            st.markdown("**🟡 Medium Courses**")
+            if len(medium) > 0:
+                for c, v in medium.items():
+                    st.warning(f"{c}: {v:.1f}")
+            else:
+                st.success("None!")
+
+        with col_g:
+            st.markdown("**🟢 Good Courses**")
+            for c, v in good.items():
+                st.success(f"{c}: {v:.1f}")
+
+        # ═══════════════════════════════════════
+        # AI Recommendations — خاصة بكل مادة
+        # ═══════════════════════════════════════
+        st.divider()
+        st.subheader("🤖 AI Recommendations per Course")
+
+        with st.spinner("Generating personalized recommendations..."):
+            try:
+                client_groq = Groq(api_key=groq_key)
+
+                # بناء قائمة تفصيلية لكل مادة
+                course_details = []
+                for course in selected_courses:
+                    avg  = df[course].mean()
+                    low  = (df[course] < weak_threshold).sum()
+                    pct  = low / len(df) * 100
+                    course_details.append(
+                        f"- {course}: avg={avg:.1f}, "
+                        f"students below {weak_threshold}: {low} ({pct:.1f}%)"
                     )
 
-            if st.button("🔮 Predict Student Level"):
-                new_df     = pd.DataFrame([new_data])
-                prediction = model.predict(new_df)[0]
-                colors_map = {'Weak':'🔴','Average':'🟡','Excellent':'🟢'}
-                st.success(f"Predicted Level: {colors_map[prediction]} **{prediction}**")
+                prompt = f"""
+You are an expert academic advisor analyzing real student performance data.
 
-        else:
-            st.warning("⚠️ No Final_Grade column found — ML model needs it.")
+DATASET: {len(df)} students, {len(selected_courses)} courses
 
-    # ───────────────────────────────
-    # تبويب 3 — توصيات AI
-    # ───────────────────────────────
-    with tab3:
-        st.subheader("💡 AI-Powered Recommendations")
+DETAILED COURSE ANALYSIS:
+{chr(10).join(course_details)}
 
-        if not groq_key:
-            st.warning("⚠️ Please enter your Groq API Key in the sidebar first.")
-        else:
-            if st.button("🚀 Generate AI Recommendations"):
-                with st.spinner("Analyzing with AI... please wait"):
-                    try:
-                        client_groq = Groq(api_key=groq_key)
+STUDENT LEVELS (Final Grade: {final_col}):
+- Weak (below {weak_threshold}): {counts.get('Weak',0)} students ({counts.get('Weak',0)/len(df)*100:.1f}%)
+- Average ({weak_threshold}-{avg_threshold}): {counts.get('Average',0)} students ({counts.get('Average',0)/len(df)*100:.1f}%)
+- Excellent (above {avg_threshold}): {counts.get('Excellent',0)} students ({counts.get('Excellent',0)/len(df)*100:.1f}%)
 
-                        avg_dict = {c: round(float(averages[c]),1) 
-                                    for c in courses if c in averages.index}
+WEAK COURSES IDENTIFIED: {list(weak.index)}
+MEDIUM COURSES IDENTIFIED: {list(medium.index)}
 
-                        prompt = f"""
-You are an expert academic advisor for a Computer Science department.
+For EACH weak course specifically, provide:
+1. Likely reasons students struggle in THIS specific course
+2. Concrete teaching methods to improve pass rate for THIS course
+3. Specific tools, resources, or projects for THIS course
 
-Student data: {len(df)} students, {len(courses)} courses.
+Then provide:
+4. Top 3 new courses to add based on the weak areas identified
+5. One overall priority action plan
 
-COURSE AVERAGES:
-{avg_dict}
-
-WEAK COURSES (below {weak_threshold}): {weak_courses}
-MEDIUM COURSES ({weak_threshold}-{medium_threshold}): {medium_courses}
-
-Please provide:
-1. Why are students struggling in the weak courses?
-2. Specific teaching improvements for EACH weak course
-3. Top 5 new courses to add for better job market readiness
-4. Priority action plan (short, medium, long term)
-
-Be specific, practical, and professional.
+Be specific to each course name. Do not give generic advice.
 """
-                        response = client_groq.chat.completions.create(
-                            model="llama-3.3-70b-versatile",
-                            messages=[{"role":"user","content":prompt}],
-                            max_tokens=1500
-                        )
-                        result = response.choices[0].message.content
-                        st.markdown(result)
 
-                        # تنزيل التقرير
-                        st.download_button(
-                            label="📥 Download Report",
-                            data=result,
-                            file_name="AI_Academic_Report.txt",
-                            mime="text/plain"
-                        )
+                response = client_groq.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=2000
+                )
 
-                    except Exception as e:
-                        st.error(f"Error: {str(e)}")
+                recommendations = response.choices[0].message.content
+                st.markdown(recommendations)
+
+                # ── تنزيل التقرير ──
+                st.divider()
+                report  = "STUDENT PERFORMANCE REPORT\n"
+                report += "=" * 50 + "\n\n"
+                report += f"Total Students: {len(df)}\n"
+                report += f"Courses Analyzed: {len(selected_courses)}\n"
+                report += f"Weak threshold: {weak_threshold} | "
+                report += f"Average threshold: {avg_threshold}\n\n"
+                report += "COURSE AVERAGES:\n"
+                for c, v in averages.items():
+                    report += f"  {c}: {v:.1f}\n"
+                report += "\n" + "=" * 50 + "\n"
+                report += "AI RECOMMENDATIONS\n"
+                report += "=" * 50 + "\n\n"
+                report += recommendations
+
+                st.download_button(
+                    label="📥 Download Full Report",
+                    data=report,
+                    file_name="student_performance_report.txt",
+                    mime="text/plain"
+                )
+
+            except Exception as e:
+                st.error(f"❌ Groq Error: {str(e)}")
 
 else:
-    st.info("👆 Please upload a CSV file to get started.")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.info("📂 Upload any CSV file")
+    with col2:
+        st.info("🎯 Select your grade columns")
+    with col3:
+        st.info("🤖 Get AI recommendations")
+```
+
+بعد ما تنسخي اضغطي:
+```
+Commit changes → Commit directly to main
